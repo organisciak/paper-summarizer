@@ -1,0 +1,5 @@
+tiktoken
+PyPDF2
+openai
+tqdm
+yaml-sync
