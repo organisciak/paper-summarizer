@@ -9,6 +9,7 @@ class DocSplitter():
 
         cleaned = self.clean_doc(text)
         self.fulldoc = self.enc.encode(cleaned)
+
         if drop_refs:
             split_at = self.find_doi_split()
             self.fulldoc = self.fulldoc[:split_at]
@@ -34,7 +35,13 @@ class DocSplitter():
     
     def find_doi_split(self, window_size=1000):
         '''move a cursor through the doc and look for when the lookback has notably less
-        'doi' tokens than lookahead. Returns an index for splitting.'''
+        'doi' tokens than lookahead. Returns an index for splitting.
+        '''
+
+        # This is a basic way to drop references. Ideally in the future,
+        # there'd be a small token classifier in docsplitter. (i.e. 
+        # train classifier on typical second vs typical last chunk, then do
+        # feature selection to shrink it down to just a small set of key tokens).
         target_text = 'doi'
         tok = self.enc.encode(target_text)
         assert len(tok) == 1, "Has to target a 1 token word"

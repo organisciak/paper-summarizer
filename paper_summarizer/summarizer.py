@@ -6,16 +6,17 @@ from yaml_sync import YamlCache
 from pathlib import Path
 import hashlib
 from .utils import DocSplitter
+from IPython.display import display_markdown, Markdown
 
 class PaperSummarizer:
-    def __init__(self, text, cache=True, cache_location=None, model='gpt-3.5-turbo'):
+    def __init__(self, text, cache=True, cache_location=None, model='gpt-3.5-turbo', drop_refs=True):
         self.cache_location = cache_location
         self.model = model
         self.text = text
 
         assert not (cache and cache_location is None), "Set a location for yaml file with cache_location if cache is True"
         
-        splitter = DocSplitter(self.text, encoding_model=model)
+        splitter = DocSplitter(self.text, encoding_model=model, drop_refs=drop_refs)
         chunksize = 2*4097//3
         if model == 'gpt-4':
             chunksize = 2*8192//3
@@ -29,13 +30,16 @@ class PaperSummarizer:
             self.cache = {}
         self.cache['model'] = model
 
-    def question(self, question, model='default', temperature=0, force=True, md=False):
+    def question(self, question, model='default', temperature=0, force=False, md=False):
         ''' Once the full summary and keypoints are created, you can ask ad hoc questions.'''
         if model == 'default':
             model = self.model
 
         if ('questions' in self.cache) and (question in self.cache['questions']) and not force:
-            return self.cache['questions'][question]
+            cached_response = self.cache['questions'][question]
+            if md:
+                cached_response = Markdown(cached_response)
+            return cached_response
         
         summary = self.full_summary()
         pts = self.full_points()
@@ -71,8 +75,7 @@ Are you ready to answer questions about the paper?
         self.cache['questions'] = qs
 
         if md:
-            from IPython.display import Markdown
-            return Markdown(md)
+            return Markdown(qs[question])
         else:
             return qs[question]
     
@@ -84,7 +87,6 @@ Are you ready to answer questions about the paper?
 
         out = f'## Summary\n{summary}\n## Key Points\n{pts}'
         if md:
-            from IPython.display import display_markdown, Markdown
             display_markdown(Markdown(out))
         else:
             print(out)

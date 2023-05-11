@@ -20,6 +20,7 @@ setup(
         'PyPDF2',
         'tqdm',
         'yaml_sync',
+        'IPython'
     ],
     classifiers=[
         'Development Status :: 3 - Alpha',
