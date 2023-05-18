@@ -3,3 +3,4 @@ PyPDF2
 openai
 tqdm
 yaml-sync
+IPython

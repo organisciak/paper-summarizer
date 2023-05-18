@@ -20,6 +20,9 @@ class PaperSummarizer:
         chunksize = 2*4097//3
         if model == 'gpt-4':
             chunksize = 2*8192//3
+        elif model == 'gpt-4-32k':
+            chunksize = 2*32768//3
+        
         self.chunks = splitter.doc_to_chunks(max_size=chunksize)
         
         if cache:
@@ -105,6 +108,11 @@ Are you ready to answer questions about the paper?
         self.cache['chunk_summaries'] = all_summaries
         self.cache['chunk_keypoints'] = all_pts
 
+        if len(self.chunks) == 1:
+            print("Only one chunk - saving as full description")
+            self.cache['full_summary'] = summary
+            self.cache['full_points'] = pts
+
         return self.cache['chunk_summaries'], self.cache['chunk_keypoints']
 
     def summarize_chunk(self, chunk, model='default', temperature=0, raw_response=False):
@@ -153,7 +161,7 @@ PAPER
 
         chunk_summaries, _ = self.summarize_all_chunks_raw()
 
-        msg = '''The follow is a summary of different chunks of the same research paper. Combine them into one overall summary. Note the problem, approach, justification, methods employed, experimental results, broader impact, and other pertinent information.\n\n'''
+        msg = '''The following are summaries of different chunks of the same research paper. Combine them into one overall summary as fully as possible. Note the problem, approach, justification, methods employed, experimental results, broader impact, and other pertinent information.\n\n'''
         for i, chunk_summary in enumerate(chunk_summaries):
             msg += f"# CHUNK {i}\n{chunk_summary}\n\n"
         
@@ -184,7 +192,7 @@ PAPER
 
         msg = f'''The following is a summary of key points extracted from different chunks of the same paper.
 
-        Consolidate the points for readability and to reduce redundancy, and present with the most important information first. Return the information as bullet points.
+        Combine all the points as fully and completely as possible, organized sensibly while avoiding redundancy. Present with the most important information first. Return the information as bullet points.
 
         Include information such as problem and approach, justification, methods, experimental results - including quants when relevant, significance and impact, and future ramifications. Don't include points unrelated to the research, such as copyright statemements and calls for reviewers.
 
