@@ -28,7 +28,7 @@ class PaperSummarizer:
         if cache:
             self.cache = YamlCache(self.cache_location, mode='rw',
                                    order=['model', 'full_summary', 'questions',
-                                          'full_points', 'chunk_summaries', 'chunk_keypoints'])
+                                          'full_points', 'chunk_outlines'])
         else:
             self.cache = {}
         self.cache['model'] = model
@@ -94,40 +94,35 @@ Are you ready to answer questions about the paper?
         else:
             print(out)
 
-    def summarize_all_chunks_raw(self, force=False):
+    def outline_all_chunks(self, force=False):
         ''' Iterate through chunks and get summaries and key points for each one '''
-        if ('chunk_summaries' in self.cache) and ('chunk_keypoints' in self.cache) and not force:
-            return self.cache['chunk_summaries'], self.cache['chunk_keypoints']
+        if ('chunk_outlines' in self.cache) and not force:
+            return self.cache['chunk_outlines']
         
-        all_summaries, all_pts = [], []
+        all_pts = []
         for chunk in tqdm(self.chunks):
-            summary, pts = self.summarize_chunk(chunk)
-            all_summaries.append(summary)
+            pts = self.outline_chunk(chunk)
             all_pts.append(pts)
 
-        self.cache['chunk_summaries'] = all_summaries
-        self.cache['chunk_keypoints'] = all_pts
+        self.cache['chunk_outlines'] = all_pts
 
         if len(self.chunks) == 1:
             print("Only one chunk - saving as full description")
-            self.cache['full_summary'] = summary
             self.cache['full_points'] = pts
 
-        return self.cache['chunk_summaries'], self.cache['chunk_keypoints']
+        return self.cache['chunk_outlines']
 
-    def summarize_chunk(self, chunk, model='default', temperature=0, raw_response=False):
+    def outline_chunk(self, chunk, model='default', temperature=0, raw_response=False):
         ''' Summarize a chunk of a document, into a summary and outline ''' 
         if model == 'default':
             model = self.model
 
-        msg1 = f'''Extract the key information from the following chunk of a research paper.
+        msg1 = f'''Outline the following chunk of a research paper, point-by-point, with as much details as is needed to capture all arguments.
 Material that may be important is: justification, background information, methods used, experimental results - with quants if available, discussion, important considerations, and broad impact.
 
-Format the output in markdown, with two headings: 'SUMMARY' and 'OUTLINE'.
+Format the output in Markdown, under the heading 'OUTLINE'.
 
-SUMMARY should be a summary of 600 words or less.
-
-OUTLINE should be a point-by-point outline of this chunk of the article. Exclude copyright information and paratextual materil.
+OUTLINE should be a finely detailed point-by-point outline of this chunk of the article. Exclude copyright information and paratextual material.
 
 Here is the paper to summarize:
 
@@ -145,11 +140,10 @@ PAPER
         if raw_response:
             return result
         result_txt = result.choices[0].message.content
-        summary, keypts = result_txt.split('OUTLINE')
-        summary = summary.split('\n', 1)[1].strip()
-        keypts = keypts.split('\n', 1)[1].strip()
-        keypts = self._parse_md_list(keypts)
-        return summary, keypts
+        _, pts = result_txt.split('OUTLINE')
+        pts = pts.split('\n', 1)[1].strip()
+        pts = self._parse_md_list(pts)
+        return pts
   
     def full_summary(self, model='default', temperature=0, force=False):
         ''' Combine the chunk summaries into one full paper summary'''
@@ -159,11 +153,11 @@ PAPER
         if 'full_summary' in self.cache and not force:
             return self.cache['full_summary']
 
-        chunk_summaries, _ = self.summarize_all_chunks_raw()
+        all_outlines = self.outline_all_chunks()
 
-        msg = '''The following are summaries of different chunks of the same research paper. Combine them into one overall summary as fully as possible. Note the problem, approach, justification, methods employed, experimental results, broader impact, and other pertinent information.\n\n'''
-        for i, chunk_summary in enumerate(chunk_summaries):
-            msg += f"# CHUNK {i}\n{chunk_summary}\n\n"
+        msg = '''The following is a detailed outline of multiple chunks of the same research paper. Combine them into one overall summary as fully as possible. Note the problem, approach, justification, methods employed, experimental results, broader impact, and other pertinent information.\n\n'''
+        for i, chunk_outline in enumerate(all_outlines):
+            msg += f"# CHUNK {i}\n{chunk_outline}\n\n"
         
         result = openai.ChatCompletion.create(
             model=model,
@@ -185,20 +179,20 @@ PAPER
         if 'full_points' in self.cache and not force:
             return self.cache['full_points']
         
-        _, chunk_keypoints = self.summarize_all_chunks_raw()
+        chunk_outlines = self.outline_all_chunks()
 
-        chunk_keypoints = [pt for chunk in chunk_keypoints for pt in chunk]
-        in_pts = "- " + "\n- ".join(chunk_keypoints)
+        chunk_outlines = [pt for chunk in chunk_outlines for pt in chunk]
+        in_pts = "- " + "\n- ".join(chunk_outlines)
 
-        msg = f'''The following is a summary of key points extracted from different chunks of the same paper.
+        msg = f'''The following is a details outline of key points from multiple chunks of the same research paper.
 
-        Combine all the points as fully and completely as possible, organized sensibly while avoiding redundancy. Present with the most important information first. Return the information as bullet points.
+        Combine all the points as fully and completely as possible, organized sensibly, avoiding redundancy but including as much non-redundant detail as possible. Present the most important information first. Return the information as bullet points.
 
         Include information such as problem and approach, justification, methods, experimental results - including quants when relevant, significance and impact, and future ramifications. Don't include points unrelated to the research, such as copyright statemements and calls for reviewers.
 
         Format the results as Markdown bullet points.
 
-        # INPUT POINTS
+        # INPUT OUTLINE
 
         {in_pts}
         '''

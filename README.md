@@ -34,7 +34,7 @@ summarizer = PDFPaperSummarizer("path/to/your/document.pdf", model='gpt-3.5-turb
 summary = summarizer.summarize()
 ```
 
-Generating a summary the first time may take a few minutes. First, it chunks the full document into chunks that are up to two-thirds of the max input size of the model (for ChatGPT, or `gpt-3.5-turbo`, that's 4,097, for `gpt-4` that's 8,192). Each chunk is summarized and outlined individually, then they're combined into a single paper summary and outline of key points.
+Generating a summary the first time may take a few minutes. First, it chunks the full document into chunks that are up to two-thirds of the max input size of the model (for ChatGPT, or `gpt-3.5-turbo`, that's 4,097, for `gpt-4` that's 8,192). Each chunk is outlined individually, then they're combined into a single paper summary and outline of key points.
 
 
 `question()` can pose ad-hoc questions and requests. The `md` argument returns a Ipython `Markdown` object which renders nicely in notebooks.
