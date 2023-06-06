@@ -4,3 +4,4 @@ openai
 tqdm
 yaml-sync
 IPython
+python-docx
