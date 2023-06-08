@@ -96,13 +96,19 @@ Are you ready to answer questions about the paper?
 
     def outline_all_chunks(self, force=False):
         ''' Iterate through chunks and get summaries and key points for each one '''
-        if ('chunk_outlines' in self.cache) and not force:
+        if ('chunk_outlines' in self.cache) and (len(self.cache['chunk_outlines']) == len(self.chunks)) and not force:
             return self.cache['chunk_outlines']
         
         all_pts = []
-        for chunk in tqdm(self.chunks):
+        for i, chunk in tqdm(enumerate(self.chunks), desc="Paper chunk summarizing progress"):
+            if ('chunk_outlines' in self.cache) and (i < len(self.cache['chunk_outlines'])):
+                    # resume previously interrupted process that already has *some* outlines
+                    continue
             pts = self.outline_chunk(chunk)
             all_pts.append(pts)
+            
+            # save intermediate progress
+            self.cache['chunk_outlines'] = all_pts
 
         self.cache['chunk_outlines'] = all_pts
 
@@ -147,13 +153,18 @@ PAPER
   
     def full_summary(self, model='default', temperature=0, force=False):
         ''' Combine the chunk summaries into one full paper summary'''
+        pbar = tqdm(total=2, desc="Preparing full summary", position=0, leave=True)
         if model == 'default':
             model = self.model
 
         if 'full_summary' in self.cache and not force:
+            pbar.update(2)
             return self.cache['full_summary']
 
+        pbar.set_description('Outlining paper chunks')
         all_outlines = self.outline_all_chunks()
+        pbar.update(1)
+        pbar.set_description('Combining outline notes to a full summary')
 
         msg = '''The following is a detailed outline of multiple chunks of the same research paper. Combine them into one overall summary as fully as possible. Note the problem, approach, justification, methods employed, experimental results, broader impact, and other pertinent information.\n\n'''
         for i, chunk_outline in enumerate(all_outlines):
@@ -165,6 +176,7 @@ PAPER
             temperature = temperature,
         )
         self.cache['full_summary'] = result.choices[0].message.content
+        pbar.update(1)
         return self.cache['full_summary']
     
     def _parse_md_list(self, list_txt):
