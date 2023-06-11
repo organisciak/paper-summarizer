@@ -99,16 +99,18 @@ Are you ready to answer questions about the paper?
         if ('chunk_outlines' in self.cache) and (len(self.cache['chunk_outlines']) == len(self.chunks)) and not force:
             return self.cache['chunk_outlines']
         
+        pbar = tqdm(total=len(self.chunks), desc="Paper chunk summarizing progress", position=1, leave=False)
         all_pts = []
-        for i, chunk in tqdm(enumerate(self.chunks), desc="Paper chunk summarizing progress"):
+        for i, chunk in enumerate(self.chunks):
             if ('chunk_outlines' in self.cache) and (i < len(self.cache['chunk_outlines'])):
                     # resume previously interrupted process that already has *some* outlines
+                    pbar.update(1)
                     continue
             pts = self.outline_chunk(chunk)
             all_pts.append(pts)
-            
             # save intermediate progress
             self.cache['chunk_outlines'] = all_pts
+            pbar.update(1)
 
         self.cache['chunk_outlines'] = all_pts
 
