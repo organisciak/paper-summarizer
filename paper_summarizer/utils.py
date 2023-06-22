@@ -8,9 +8,15 @@ class DocSplitter():
         self.enc = tiktoken.encoding_for_model(encoding_model)
 
         cleaned = self.clean_doc(text)
+        if drop_refs:
+            split_at = self.find_references_heading(cleaned)
+            if split_at:
+                cleaned = cleaned[:split_at]
+
         self.fulldoc = self.enc.encode(cleaned)
 
-        if drop_refs:
+        if drop_refs and not split_at:
+            # if the heading search above didn't catch anything, look for a split where there are more dois in the second half
             split_at = self.find_doi_split()
             self.fulldoc = self.fulldoc[:split_at]
 
@@ -22,6 +28,13 @@ class DocSplitter():
             if len(tok) == 1:
                 self.default_break_tokens.append(tok[0])
 
+    def find_references_heading(self, text):
+        # find a markdown heading or subheading named references, case-insensitive, with re
+        search_for_refs_heading = re.search(r'^#+\s*references', text, flags=re.IGNORECASE|re.MULTILINE)
+        if search_for_refs_heading:
+            return search_for_refs_heading.start()
+        return None
+    
     def clean_doc(self, text):
         # remove whitespace at start of lines
         cleaned = re.sub('^\s+', '', text, flags=re.MULTILINE)
