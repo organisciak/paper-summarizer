@@ -1,11 +1,34 @@
 import tiktoken # openai tokenizer - can estimate input size
 import re
-class DocSplitter():
+import difflib
 
+def word_diff(first, second, html=True):
+    first_words = first.split()
+    second_words = second.split()
+
+    diff = difflib.ndiff(first_words, second_words)
+    if not html:
+        return diff
+    
+    diff_text = ""
+    for i in diff:
+        if i[0] == ' ':
+            diff_text += i[2:] + " "
+        elif i[0] == '-':
+            # add strikethrough
+            diff_text += '<span style="color: red; text-decoration: line-through">' + i[2:] + '</span>' + " "
+        elif i[0] == '+':
+            diff_text += '<span style="color: green;">' + i[2:] + '</span>' + " "
+    return diff_text.strip()
+
+
+class DocSplitter():
     def __init__(self, text, encoding_model='gpt-4', drop_refs=True):
         ''' Split a document to chunks based on its BPE encoding'''
         self.text = text
-        self.enc = tiktoken.encoding_for_model(encoding_model)
+        self.model = encoding_model
+        
+        self.enc = tiktoken.encoding_for_model(self.model)
 
         cleaned = self.clean_doc(text)
         if drop_refs:
@@ -39,6 +62,10 @@ class DocSplitter():
         # remove whitespace at start of lines
         cleaned = re.sub('^\s+', '', text, flags=re.MULTILINE)
         return cleaned
+    
+    def decode(self):
+        # reconstruct the text from the encoded fulldoc
+        return self.enc.decode(self.fulldoc)
     
     def doc_to_chunks(self, max_size=5000, window_size=50):
         '''Convert a document of tokens into more reasonably-sized chunks'''
