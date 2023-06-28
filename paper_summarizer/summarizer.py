@@ -79,17 +79,31 @@ Are you ready to answer questions about the paper?
         else:
             return self.splitter, self.chunks
 
-    def direct_question(self, question, model='default', temperature=0, force=False, md=False, target_chunk=0):
-        ''' Ask a question directly of the full text (only the first chunk, unless target_chunk='all').
+    def direct_question(self, question, model='default', temperature=0, force=False, md=False, target_chunk=0, target_text=None, no_cache=False):
+        ''' Ask a question directly of the full text (only the first chunk, unless target_chunk='all'). You can also supply text directly, with target_text.
         
         Usually you want `question`, unless you have a shorter text.
         '''
+        if ('direct_questions' in self.cache) and (question in self.cache['direct_questions']) and not force:
+            cached_response = self.cache['direct_questions'][question]
+            if md:
+                cached_response = Markdown(cached_response)
+            return cached_response
+        
         if model == 'default':
             model = self.model
         _, chunks = self._split_doc(model)
-        target_chunks = chunks if target_chunk == 'all' else chunks[min(target_chunk, len(chunks)-1)]
+
+        if target_text is not None:
+            if target_chunk is not None:
+                print("Prioritizing target_text over target_chunk")
+            target_chunks = [target_text]
+        else:
+            target_chunks = chunks if target_chunk == 'all' else [chunks[min(target_chunk, len(chunks)-1)]]
+        
         if len(target_chunks) > 1:
             pbar = tqdm(total=len(target_chunks), desc="Collecting Line Item Suggestions", position=1, leave=False)
+        
         direct_q_template = '''The following is a document to talk about.
 
 PAPER
@@ -101,20 +115,31 @@ PAPER
 Are you ready to answer questions about the document?
 '''
         results = []
+
         for target_text in target_chunks:
             prompt = direct_q_template.format(target_text)
-            result = self._question(prompt, question, 'direct_questions', model=model, temperature=temperature, force=force, md=md)
+            result = self._question(prompt, question, 'direct_questions', 
+                                    model=model, temperature=temperature,
+                                    force=force, md=md, no_cache=True)
             results.append(result)
             if len(target_chunks) > 1:
                 pbar.update(1)
 
         final_result = "\n------------\n".join(results)
+
+        if not no_cache:
+            if 'direct_questions' not in self.cache:
+                self.cache['direct_questions'] = {}
+            qs = self.cache['direct_questions']
+            qs[question] = final_result
+            self.cache['direct_questions'] = qs
+
         if md:
             return Markdown(final_result)
         else:
             return final_result
         
-    def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False, md=False):
+    def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False, md=False, no_cache=False):
         if model == 'default':
             model = self.model
 
@@ -127,6 +152,7 @@ Are you ready to answer questions about the document?
         big_summary ={"role":"user", "content": summary_prompt}
         bot_affirm = {"role":"assistant", "content": "Yes, I am ready to answer questions about the paper."}
 
+
         result = openai.ChatCompletion.create(
                     model=model,
                     messages=[big_summary, bot_affirm,
@@ -134,13 +160,16 @@ Are you ready to answer questions about the document?
                     ],
                     temperature = temperature,
             )
-        
-        if key not in self.cache:
-            self.cache[key] = {}
-        qs = self.cache[key]
-        qs[question] = result.choices[0].message.content
-        self.cache[key] = qs
-        return qs[question]
+
+        if not no_cache:
+            if key not in self.cache:
+                self.cache[key] = {}
+            qs = self.cache[key]
+            qs[question] = result.choices[0].message.content
+            self.cache[key] = qs
+            return qs[question]
+        else:
+            return result.choices[0].message.content
     
     def summarize(self, md=False, protocol=0, force=False):
         ''' Print full summaries'''
@@ -311,52 +340,86 @@ PAPER
         l = [x.strip() for x in list_txt.strip('-').split('\n-')]
         return l
     
-    def edit_suggestions(self, model='default', temperature=0.7, force=False, as_html=True, display_in_progress=True):
+    def _parse_edit_suggestion(self, edit, html=True):
+        ''' Parse a raw response line from LLM into a diff'''
+        # extract first and second quote from string
+        parts = edit.split('||||')
+        if len(parts) != 2:
+            return None
+        first, second = parts
+        first = first.replace('\n', ' ')
+        second = second.replace('\n', ' ')
+        if first.strip() == second.strip():
+            return None
+        diff = word_diff(first, second, html=html)
+        return diff
+        
+    def edit_suggestions(self, model='default', temperature=0.3, force=False, 
+                         as_html=True, display_in_progress=True, small_chunks=False):
         '''Provide edit suggestions for the paper. This uses direct_question (which is a bit more expensive) on each chunk
         of the paper. It then displays the diff of the original and the suggested edits, formatted as HTML. Prompt currently 
         is opinionated and not customizeable, but you can use the direct_question method directly if you want to customize it.
         
         temperature: the temperature to use for the direct_question method. NUnlike most methods in this class, the default is not zero [default: 0.7]
         as_html: if True it returns an IPython HTML object with the diff of the original and the suggested edits - these
-        can be displayed in a notebook. [default: True]
+        can be displayed in a notebook. [default: 0.3]
 
         display_in_progress: if True, display the diff of each chunk as it is being processed. This is useful for reviewing the suggestions
         while the next chunk is being processed. The results are still returned at the end, so if you're in a notebook, assign to a variable
         to keep them from printing again! [default: True]
 
         '''
+        if ('edit_suggestions' in self.cache) and not force:
+            all_edit_lines = self.cache['edit_suggestions']
+            all_edit_lines = re.sub('\n\s+(\|\|\|\|)', r'\1', all_edit_lines)
+            all_suggestions = [self._parse_edit_suggestion(x, html=as_html) for x in all_edit_lines.split('\n')]
+            all_suggestions = [x for x in all_suggestions if x is not None]
+            if as_html:
+                return HTML("<br/><br/>".join(all_suggestions))
+            else:
+                return "\n".join(all_suggestions)
+        
         if model == 'default':
             model = self.model
-        _, chunks = self._split_doc(model)
+        _, chunks = self._split_doc(model, chunksize=(800 if small_chunks else 'auto'))
 
-        prompt = 'Write 30 line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc. Respond in the format {{original snippet}}||||{{corrected snippet}}. Ignore smart quotes, and don\'t number the lines.'
+        prompt = 'Write a numbered list of line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc. Identity as many as you can. Respond in the format {{original snippet}}||||{{corrected snippet}}. Ignore smart quotes, and don\'t number the lines.'
         
         all_suggestions = []
-        for i in tqdm(range(chunks), desc="Generating edit suggestions", position=0, leave=False):
+        all_edit_suggestions = ""
+
+        for chunk in tqdm(chunks, desc="Generating edit suggestions", position=0, leave=False):
             edit_suggestions = self.direct_question(prompt, force=force,
                                                     temperature=temperature,
-                                                    md=False, target_chunk=i,
+                                                    md=False, target_text=chunk,
+                                                    target_chunk=None,
+                                                    no_cache=True,
                                                     model=model)
+            edit_suggestions = re.sub("^\n\s*(\|\|\|\|)", "\1", edit_suggestions)
+            edit_suggestions = re.sub("^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
             edit_suggestions = re.sub("^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", edit_suggestions, flags=re.MULTILINE)
-        
+            
+            all_edit_suggestions += '\n' + edit_suggestions
+
+            all_diffs = []
             for edit in edit_suggestions.split('\n'):
-                # extract first and second quote from string
-                parts = edit.split('||||')
-                if len(parts) != 2:
+                diff = self._parse_edit_suggestion(edit, html=as_html)
+                if diff is None:
                     continue
-                first, second = parts
-                suggestions = word_diff(first, second, html=as_html)
-                all_suggestions.append(suggestions)
+                all_diffs.append(diff)
+
                 if display_in_progress:
                     if as_html:
-                        display(HTML(suggestions))
+                        display(HTML(diff))
                     else:
-                        print(suggestions)
+                        print(diff)
 
+        self.cache['edit_suggestions'] = all_edit_suggestions.strip()
         if as_html:
-            return HTML("<br /><br />".join(all_suggestions))
+            html = "<br/>".join(all_diffs)
+            return HTML(html)
         else:
-            return "\n\n".join(all_suggestions)
+            return "\n\n".join(all_diffs)
 
     def full_points(self, model='default', temperature=0, force=False, protocol=0):
         ''' Combine the by-chunk key points into one set'''

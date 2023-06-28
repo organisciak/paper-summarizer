@@ -7,20 +7,27 @@ def word_diff(first, second, html=True):
     second_words = second.split()
 
     diff = difflib.ndiff(first_words, second_words)
-    if not html:
-        return diff
-    
     diff_text = ""
-    for i in diff:
-        if i[0] == ' ':
-            diff_text += i[2:] + " "
-        elif i[0] == '-':
-            # add strikethrough
-            diff_text += '<span style="color: red; text-decoration: line-through">' + i[2:] + '</span>' + " "
-        elif i[0] == '+':
-            diff_text += '<span style="color: green;">' + i[2:] + '</span>' + " "
-    return diff_text.strip()
 
+    if not html:
+        line1, line2 = "", ""
+        for i in diff:
+            if i[0] == ' ' or i[0] == '-':
+                line1 += i + " "
+
+            if i[0] == ' ' or i[0] == '+':
+                line2 += i + " "
+        diff_text += line1.strip() + "\n" + line2.strip()
+    
+    else:
+        for i in diff:
+            if i[0] == ' ':
+                diff_text += i[2:] + " "
+            elif i[0] == '-':
+                diff_text += '<span style="color: red; text-decoration: line-through">' + i[2:] + '</span>' + " "
+            elif i[0] == '+':
+                diff_text += '<span style="color: green;">' + i[2:] + '</span>' + " "
+    return diff_text.strip()
 
 class DocSplitter():
     def __init__(self, text, encoding_model='gpt-4', drop_refs=True):
