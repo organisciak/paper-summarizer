@@ -50,8 +50,6 @@ class PaperSummarizer:
 Are you ready to answer questions about the {self.doctype}?
 '''
         result = self._question(big_summary, question, 'questions', model=model, temperature=temperature, force=force)
-
-        print(result)
         if md:
             return Markdown(result)
         else:
@@ -179,14 +177,14 @@ Are you ready to answer questions about the document?
             qs = self.cache[key]
             qs[question] = result.choices[0].message.content.split('\n')
             self.cache[key] = qs
-            return qs[question]
+            return "\n".join(qs[question])
         else:
             return result.choices[0].message.content
     
     def summarize(self, md=False, protocol=0, force=False):
         ''' Print full summaries'''
         summary = self.full_summary(protocol=protocol, force=force)
-        pts = "\n- " + "\n- ".join(self.full_points(protocol=protocol))
+        pts = self.full_points(protocol=protocol)
 
         out = f'## Summary\n{summary}\n## Key Points\n{pts}'
         if md:
@@ -311,7 +309,6 @@ Here is the document to summarize:
         result_txt = result.choices[0].message.content
         _, pts = result_txt.split('OUTLINE')
         pts = pts.split('\n')
-        pts = self._parse_md_list(pts)
         return pts
   
     def full_summary(self, model='default', temperature=0, force=False, protocol=0):
@@ -348,11 +345,7 @@ Here is the document to summarize:
         )
         self.cache['full_summary'] = result.choices[0].message.content.split('\n')
         pbar.update(1)
-        return self.cache['full_summary']
-    
-    def _parse_md_list(self, list_txt):
-        l = [x.strip() for x in list_txt.strip('-').split('\n-')]
-        return l
+        return "\n".join(self.cache['full_summary'])
     
     def _parse_edit_suggestion(self, edit, html=True):
         ''' Parse a raw response line from LLM into a diff'''
@@ -471,7 +464,7 @@ Here is the document to summarize:
         )
         result_txt = result.choices[0].message.content
         keypts_txt = re.sub('^#.*', '', result_txt).strip()
-        self.cache['full_points'] = self._parse_md_list(keypts_txt).split('\n')
+        self.cache['full_points'] = keypts_txt.split('\n')
         return self.cache['full_points']
 
 class PDFPaperSummarizer(PaperSummarizer):
@@ -606,3 +599,35 @@ class DocxPaperSummarizer(PaperSummarizer):
 
         else:
             return text
+        
+class WebPageSummarizer(PaperSummarizer):
+    def __init__(self, url, cache_location='match_file', *args, **kwargs):
+        self.url = url
+        self.title = None
+        
+        text = self.extract_text_from_url()
+
+        if cache_location == 'match_file':
+            cache_location = f"{url.split('://')[-1].replace('/', '_')}.yaml"
+        elif cache_location == 'hash':
+            # saves to the same directory, but append the hash of the text to the name
+            p = Path(url)
+            md5_hasher = hashlib.md5()
+            md5_hasher.update(self.text.encode('utf-8'))
+            hash = md5_hasher.hexdigest()[:6]
+            cache_location = p.parent / f"{p.stem}_{hash}.yaml"
+
+        super().__init__(text, cache_location=cache_location, *args, **kwargs)
+
+    def extract_text_from_url(self):
+        import requests
+        from readability import Document
+        response = requests.get(self.url)
+        doc = Document(response.content)
+        self.title = doc.title()
+        html = doc.summary()
+        return self.parse_html_to_markdown(html)
+
+    def parse_html_to_markdown(self, html):
+        import html2text
+        return html2text.html2text(html)

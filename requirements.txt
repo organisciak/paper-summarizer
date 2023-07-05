@@ -1,7 +1,14 @@
 tiktoken
-PyPDF2
 openai
-tqdm
+#utilities
 yaml-sync
+tqdm
+# For Markdown and HTML display
 IPython
+# PDF parsing
+PyPDF2
+# Docx parsing
 python-docx
+# HTML parsing
+html2text
+readability-lxml

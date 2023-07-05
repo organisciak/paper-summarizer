@@ -26,7 +26,7 @@ def word_diff(first, second, html=True):
             elif i[0] == '-':
                 diff_text += '<span style="color: red; text-decoration: line-through">' + i[2:] + '</span>' + " "
             elif i[0] == '+':
-                diff_text += '<span style="color: green;">' + i[2:] + '</span>' + " "
+                diff_text += '<span style="color: green; text-decoration: underline">' + i[2:] + '</span>' + " "
     return diff_text.strip()
 
 class DocSplitter():
