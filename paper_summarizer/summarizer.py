@@ -496,6 +496,29 @@ class PDFPaperSummarizer(PaperSummarizer):
         return extracted_text
     
 
+class MDPaperSummarizer(PaperSummarizer):
+    def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
+        self.doc_path = doc_path
+        
+        text = self.extract_text_from_md()
+
+        if cache_location == 'match_file':
+            cache_location = f"{doc_path.rsplit('.', 1)[0]}.yaml"
+        elif cache_location == 'hash':
+            # saves to the same directory, but append the hash of the text to the name
+            p = Path(doc_path)
+            md5_hasher = hashlib.md5()
+            md5_hasher.update(self.text.encode('utf-8'))
+            hash = md5_hasher.hexdigest()[:6]
+            cache_location = p.parent / f"{p.stem}_{hash}.yaml"
+
+        super().__init__(text, cache_location=cache_location, *args, **kwargs)
+
+    def extract_text_from_md(self):
+        with open(self.doc_path, "r") as file:
+            text = file.read()
+        return text
+
 class DocxPaperSummarizer(PaperSummarizer):
     def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
         self.doc_path = doc_path
