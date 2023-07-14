@@ -1,2 +1,7 @@
 dev.ipynb
 *.pyc
+.DS_Store
+hashing*
+*-test*
+data/
+mockups/*
