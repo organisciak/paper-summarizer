@@ -7,7 +7,8 @@ from pathlib import Path
 import hashlib
 from .utils import DocSplitter, word_diff
 import numpy as np
-from IPython.display import display, Markdown, HTML, display
+import time
+from IPython.display import display, Markdown, HTML, clear_output
 
 class PaperSummarizer:
     def __init__(self, text, cache=True, cache_location=None, model='gpt-3.5-turbo', doctype='research paper', drop_refs=True):
@@ -31,7 +32,7 @@ class PaperSummarizer:
             self.cache = {}
         self.cache['model'] = model
     
-    def question(self, question, model='default', temperature=0, force=False, md=False):
+    def question(self, question, model='default', temperature=0, force=False, md=False, stream=False):
         ''' Once the full summary and keypoints are created, you can ask ad hoc questions.'''
 
         summary = self.full_summary()
@@ -49,7 +50,9 @@ class PaperSummarizer:
 
 Are you ready to answer questions about the {self.doctype}?
 '''
-        result = self._question(big_summary, question, 'questions', model=model, temperature=temperature, force=force)
+        result = self._question(big_summary, question, 'questions', model=model, temperature=temperature,
+                                force=force, stream=stream, md=md)
+
         if md:
             return Markdown(result.replace('\n', '\n\n'))
         else:
@@ -87,8 +90,43 @@ Are you ready to answer questions about the {self.doctype}?
         else:
             return self.splitter, self.chunks
 
+    def _stream_response(self, response, draw_every=0, md=False, clear_on_finish=True):
+        ''' Print a streaming response, as it comes in. 
+        
+        Parameters:
+        response: the streaming response object from OpenAI
+        draw_every: how often to print the response, in seconds. If 0, draw every event.
+        md: if True, format the response as Markdown
+        clear_on_finish: if True, clear the output when the response is finished.
+        '''
+        collected_chunks = []
+        collected_content = ""
+        last_print = time.time()
+        role = None
+
+        for chunk in response:
+            collected_chunks.append(chunk)
+            chunk_message = chunk['choices'][0]['delta']
+            collected_content += chunk_message.get('content', '')
+
+            if 'role' in chunk_message:
+                role = chunk_message['role']
+
+            if (time.time() - last_print) > draw_every:
+                if md:
+                    clear_output(wait=True)
+                    display(Markdown(collected_content.replace('\n', '\n\n')))
+                else:
+                    print(chunk_message.get('content', ''), end='')
+                last_print = time.time()
+
+        if clear_on_finish:
+            clear_output(wait=True)
+        
+        return {'role': role, 'content': collected_content}
+
     def direct_question(self, question, model='default', temperature=0, force=False, md=False,
-                        target_chunk=0, target_text=None, no_cache=False):
+                        target_chunk=0, target_text=None, no_cache=False, stream=False):
         ''' Ask a question directly of the full text (only the first chunk, unless target_chunk='all'). You can also supply text directly, with target_text.
         
         Usually you want `question`, unless you have a shorter text.
@@ -131,7 +169,10 @@ Are you ready to answer questions about the document?
         for target_text in target_chunks:
             prompt = direct_q_template.format(self.doctype.upper(), target_text)
             result = self._question(prompt, question, 'direct_questions', 
-                                    model=model, temperature=temperature,
+                                    model=model,
+                                    temperature=temperature,
+                                    stream=stream,
+                                    md=md,
                                     force=force, no_cache=True)
             results.append(result)
             if len(target_chunks) > 1:
@@ -151,7 +192,8 @@ Are you ready to answer questions about the document?
         else:
             return final_result
         
-    def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False, no_cache=False):
+    def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False,
+                  no_cache=False, stream=False, md=False):
         if model == 'default':
             model = self.model
 
@@ -163,24 +205,29 @@ Are you ready to answer questions about the document?
         big_summary ={"role":"user", "content": summary_prompt}
         bot_affirm = {"role":"assistant", "content": "Yes, I am ready to answer questions about the {self.doctype}."}
 
-
         result = openai.ChatCompletion.create(
                     model=model,
                     messages=[big_summary, bot_affirm,
                     {"role": "user", "content": question}
                     ],
+                    stream=stream,
                     temperature = temperature,
             )
+        
+        if stream:
+            result_msg = self._stream_response(result, md=md)
+        else:
+            result_msg = result.choices[0].message
 
         if not no_cache:
             if key not in self.cache:
                 self.cache[key] = {}
             qs = self.cache[key]
-            qs[question] = result.choices[0].message.content.split('\n')
+            qs[question] = result_msg.get('content', '').split('\n')
             self.cache[key] = qs
             return "\n".join(qs[question])
         else:
-            return result.choices[0].message.content
+            return result_msg.get('content', '')
     
     def summarize(self, md=False, protocol=0, force=False):
         ''' Print full summaries'''
