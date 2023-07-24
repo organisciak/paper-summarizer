@@ -51,7 +51,7 @@ Are you ready to answer questions about the {self.doctype}?
 '''
         result = self._question(big_summary, question, 'questions', model=model, temperature=temperature, force=force)
         if md:
-            return Markdown(result)
+            return Markdown(result.replace('\n', '\n\n'))
         else:
             return result
 
@@ -87,7 +87,8 @@ Are you ready to answer questions about the {self.doctype}?
         else:
             return self.splitter, self.chunks
 
-    def direct_question(self, question, model='default', temperature=0, force=False, md=False, target_chunk=0, target_text=None, no_cache=False):
+    def direct_question(self, question, model='default', temperature=0, force=False, md=False,
+                        target_chunk=0, target_text=None, no_cache=False):
         ''' Ask a question directly of the full text (only the first chunk, unless target_chunk='all'). You can also supply text directly, with target_text.
         
         Usually you want `question`, unless you have a shorter text.
@@ -96,7 +97,7 @@ Are you ready to answer questions about the {self.doctype}?
             cached_response = self.cache['direct_questions'][question]
             cached_response = "\n".join(cached_response)
             if md:
-                cached_response = Markdown(cached_response)
+                cached_response = Markdown(cached_response.replace('\n', '\n\n'))
             return cached_response
         
         if model == 'default':
@@ -146,7 +147,7 @@ Are you ready to answer questions about the document?
             self.cache['direct_questions'] = qs
 
         if md:
-            return Markdown(final_result)
+            return Markdown(final_result.replace('\n', '\n\n'))
         else:
             return final_result
         
@@ -188,7 +189,7 @@ Are you ready to answer questions about the document?
 
         out = f'## Summary\n{summary}\n## Key Points\n{pts}'
         if md:
-            display(Markdown(out))
+            display(Markdown(out.replace('\n', '\n\n')))
         else:
             print(out)
 
