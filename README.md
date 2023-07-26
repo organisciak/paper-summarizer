@@ -5,7 +5,7 @@ Paper Summarizer is a Python library for extracting and summarizing content from
 ## Installation
 
 ```bash
-pip install paper_summarizer
+pip install https://github.com/organisciak/paper-summarizer
 ```
 
 ## Basic Usage
