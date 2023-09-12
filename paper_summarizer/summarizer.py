@@ -468,6 +468,7 @@ Here is the document to summarize:
         all_suggestions = []
         all_edit_suggestions = ""
 
+        all_diffs = []
         for chunk in tqdm(chunks, desc="Generating edit suggestions", position=0, leave=False):
             edit_suggestions = self.direct_question(prompt, force=force,
                                                     temperature=temperature,
@@ -481,7 +482,6 @@ Here is the document to summarize:
 
             all_edit_suggestions += '\n' + edit_suggestions
 
-            all_diffs = []
             for edit in edit_suggestions.split('\n'):
                 diff = self._parse_edit_suggestion(edit, html=as_html)
                 if diff is None:
