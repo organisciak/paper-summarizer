@@ -10,8 +10,11 @@ import numpy as np
 import time
 from IPython.display import display, Markdown, HTML, clear_output
 
+
 class PaperSummarizer:
-    def __init__(self, text, cache=True, cache_location=None, model='gpt-3.5-turbo', doctype='research paper', drop_refs=True):
+    def __init__(self, text, cache=True, cache_location=None,
+                 model='gpt-3.5-turbo', doctype='research paper',
+                 drop_refs=True):
         self.cache_location = cache_location
         self.model = model
         self.text = text
@@ -19,7 +22,7 @@ class PaperSummarizer:
         self.chunks = None
         self.doctype = doctype
         self.drop_refs = drop_refs
-        
+
         assert not (cache and cache_location is None), "Set a location for yaml file with cache_location if cache is True"
 
         self.splitter, self.chunks = self._split_doc(model)
@@ -31,9 +34,12 @@ class PaperSummarizer:
         else:
             self.cache = {}
         self.cache['model'] = model
-    
-    def question(self, question, model='default', temperature=0, force=False, md=False, stream=False):
-        ''' Once the full summary and keypoints are created, you can ask ad hoc questions.'''
+
+    def question(self, question, model='default', temperature=0, force=False,
+                 md=False, stream=False):
+        ''' Once the full summary and keypoints are created, you can ask
+        ad-hoc questions.
+        '''
 
         summary = self.full_summary()
         pts = self.full_points()
@@ -50,7 +56,8 @@ class PaperSummarizer:
 
 Are you ready to answer questions about the {self.doctype}?
 '''
-        result = self._question(big_summary, question, 'questions', model=model, temperature=temperature,
+        result = self._question(big_summary, question, 'questions',
+                                model=model, temperature=temperature,
                                 force=force, stream=stream, md=md)
 
         if md:
@@ -65,7 +72,7 @@ Are you ready to answer questions about the {self.doctype}?
         '''
         if model == 'default':
             return self.splitter, self.chunks
-        
+
         update_chunks = False
         if chunksize == 'auto':
             if '32k' in model:
@@ -90,9 +97,10 @@ Are you ready to answer questions about the {self.doctype}?
         else:
             return self.splitter, self.chunks
 
-    def _stream_response(self, response, draw_every=0, md=False, clear_on_finish=True):
-        ''' Print a streaming response, as it comes in. 
-        
+    def _stream_response(self, response, draw_every=0, md=False,
+                         clear_on_finish=True):
+        ''' Print a streaming response, as it comes in.
+
         Parameters:
         response: the streaming response object from OpenAI
         draw_every: how often to print the response, in seconds. If 0, draw every event.
@@ -122,22 +130,24 @@ Are you ready to answer questions about the {self.doctype}?
 
         if clear_on_finish:
             clear_output(wait=True)
-        
+
         return {'role': role, 'content': collected_content}
 
-    def direct_question(self, question, model='default', temperature=0, force=False, md=False,
-                        target_chunk=0, target_text=None, no_cache=False, stream=False):
-        ''' Ask a question directly of the full text (only the first chunk, unless target_chunk='all'). You can also supply text directly, with target_text.
-        
+    def direct_question(self, question, model='default', temperature=0,
+                        force=False, md=False, target_chunk=0, target_text=None, no_cache=False,
+                        stream=False):
+        ''' Ask a question directly of the full text (only the first chunk,
+        unless target_chunk='all'). You can also supply text directly, with target_text.
+
         Usually you want `question`, unless you have a shorter text.
         '''
-        if ('direct_questions' in self.cache) and (question in self.cache['direct_questions']) and not force:
+        if (('direct_questions' in self.cache) and (question in self.cache['direct_questions']) and not force):
             cached_response = self.cache['direct_questions'][question]
             cached_response = "\n".join(cached_response)
             if md:
                 cached_response = Markdown(cached_response.replace('\n', '\n\n'))
             return cached_response
-        
+
         if model == 'default':
             model = self.model
         _, chunks = self._split_doc(model)
@@ -146,14 +156,14 @@ Are you ready to answer questions about the {self.doctype}?
             if target_chunk is not None:
                 print("Prioritizing target_text over target_chunk")
             target_chunks = [target_text]
-        elif target_chunk =='all':
+        elif target_chunk == 'all':
             target_chunks = chunks
         else:
             target_chunks = [chunks[min(target_chunk, len(chunks)-1)]]
-        
+
         if len(target_chunks) > 1:
             pbar = tqdm(total=len(target_chunks), desc="Collecting Line Item Suggestions", position=1, leave=False)
-        
+
         direct_q_template = '''The following is a document to talk about.
 
 {}
@@ -168,7 +178,7 @@ Are you ready to answer questions about the document?
 
         for target_text in target_chunks:
             prompt = direct_q_template.format(self.doctype.upper(), target_text)
-            result = self._question(prompt, question, 'direct_questions', 
+            result = self._question(prompt, question, 'direct_questions',
                                     model=model,
                                     temperature=temperature,
                                     stream=stream,
@@ -191,7 +201,7 @@ Are you ready to answer questions about the document?
             return Markdown(final_result.replace('\n', '\n\n'))
         else:
             return final_result
-        
+
     def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False,
                   no_cache=False, stream=False, md=False):
         if model == 'default':
@@ -201,19 +211,21 @@ Are you ready to answer questions about the document?
             cached_response = self.cache[key][question]
             cached_response = "\n".join(cached_response)
             return cached_response
-        
-        big_summary ={"role":"user", "content": summary_prompt}
-        bot_affirm = {"role":"assistant", "content": "Yes, I am ready to answer questions about the {self.doctype}."}
+
+        big_summary = {"role": "user", "content": summary_prompt}
+        bot_affirm = {"role": "assistant", "content": "Yes, I am ready to answer questions about the {self.doctype}."}
 
         result = openai.ChatCompletion.create(
                     model=model,
-                    messages=[big_summary, bot_affirm,
-                    {"role": "user", "content": question}
+                    messages=[
+                        {"role": "system", "content": "You are a helpful document reader and assistant."},
+                        big_summary, bot_affirm,
+                        {"role": "user", "content": question}
                     ],
                     stream=stream,
-                    temperature = temperature,
+                    temperature=temperature,
             )
-        
+
         if stream:
             result_msg = self._stream_response(result, md=md)
         else:
@@ -228,11 +240,11 @@ Are you ready to answer questions about the document?
             return "\n".join(qs[question])
         else:
             return result_msg.get('content', '')
-    
-    def summarize(self, md=False, protocol=0, force=False):
+
+    def summarize(self, md=False, model='default', protocol=0, force=False):
         ''' Print full summaries'''
-        summary = self.full_summary(protocol=protocol, force=force)
-        pts = self.full_points(protocol=protocol)
+        summary = self.full_summary(protocol=protocol, force=force, model=model)
+        pts = self.full_points(protocol=protocol, model=model)
 
         out = f'## Summary\n{summary}\n## Key Points\n{pts}'
         if md:
@@ -242,9 +254,9 @@ Are you ready to answer questions about the document?
 
     def outline_all_chunks(self, model='default', force=False, protocol=0, debug=False):
         ''' Iterate through chunks and get summaries and key points for each one.
-        
+
         Protocol is an integer referring to a specific prompt style, and is passed down to outline_chunk.
-        
+
         '''
         if model == 'default':
             model = self.model
@@ -252,14 +264,14 @@ Are you ready to answer questions about the document?
 
         if ('chunk_outlines' in self.cache) and (len(self.cache['chunk_outlines']) == len(chunks)) and not force:
             return self.cache['chunk_outlines']
-        
+
         pbar = tqdm(total=len(chunks), desc=f"{self.doctype.title()} chunk summarizing progress", position=1, leave=False)
         all_pts = []
         for i, chunk in enumerate(chunks):
             if ('chunk_outlines' in self.cache) and (i < len(self.cache['chunk_outlines'])) and not force:
-                    # resume previously interrupted process that already has *some* outlines
-                    pbar.update(1)
-                    continue
+                # resume previously interrupted process that already has *some* outlines
+                pbar.update(1)
+                continue
             pts = self.outline_chunk(chunk, protocol=protocol, debug=debug)
             all_pts.append(pts)
             # save intermediate progress
@@ -282,13 +294,13 @@ Are you ready to answer questions about the document?
             1: GPT is asked to rewrite the chunk at 25% of the length and point form. This may tease out longer outlines, which is useful at this stage.
             2: This asks for each paragraph to be described. It tries to tease out as much detail as possible, while compressing the token count. This may get too long.
             3: Similar to 2, this goes for length rather than summary. It asks for a half-length rewrite.
-        ''' 
+        '''
         if model == 'default':
             model = self.model
         _, chunks = self._split_doc(model)
 
-        max_len = min(np.round(100/len(chunks), 0).astype(int), 20) # max length of summary is 100%/len(chunks) or 20% of the total length of the document
-        
+        max_len = min(np.round(100/len(chunks), 0).astype(int), 20)  # max length of summary is 100%/len(chunks) or 20% of the total length of the document
+
         protocols = [
         f'''Outline the following chunk of a {self.doctype}, point-by-point, with as much details as is needed to capture all arguments.
 Material that may be important is: justification, background information, methods used, experimental results - with quants if available, discussion, important considerations, and broad impact.
@@ -349,8 +361,11 @@ Here is the document to summarize:
 
         result = openai.ChatCompletion.create(
             model=model,
-            messages=[{"role": "user", "content": msg.strip()}],
-            temperature = temperature,
+            messages=[
+                {"role": "system", "content": "You are a very detailed document summarizer"},
+                {"role": "user", "content": msg.strip()}
+                ],
+            temperature=temperature,
         )
         if raw_response:
             return result
@@ -358,18 +373,18 @@ Here is the document to summarize:
         _, pts = result_txt.split('OUTLINE')
         pts = pts.split('\n')
         return pts
-  
+
     def full_summary(self, model='default', temperature=0, force=False, protocol=0):
         ''' Combine the chunk summaries into one full document summary'''
-        
+
         if model == 'default':
             model = self.model
 
         if 'full_summary' in self.cache and not force:
             return "\n".join(self.cache['full_summary'])
         if force:
-            print("Forcing a rewrite of the chunk summarization, where all the chunks are " \
-                  "combined into a full summary. To force the re-outlining of chunks, run " \
+            print("Forcing a rewrite of the chunk summarization, where all the chunks are "
+                  "combined into a full summary. To force the re-outlining of chunks, run "
                   "outline_all_chunks(force=True) first.")
 
         pbar = tqdm(total=2, desc="Preparing full summary", position=0, leave=False)
@@ -385,16 +400,19 @@ Here is the document to summarize:
         msg = protocols[protocol]
         for i, chunk_outline in enumerate(all_outlines):
             msg += f"# CHUNK {i}\n{chunk_outline}\n\n"
-        
+
         result = openai.ChatCompletion.create(
             model=model,
-            messages=[{"role": "user", "content": msg}],
-            temperature = temperature,
+            messages=[
+                {"role": "system", "content": "You are a very detailed document summarizer"},
+                {"role": "user", "content": msg}
+                ],
+            temperature=temperature,
         )
         self.cache['full_summary'] = result.choices[0].message.content.split('\n')
         pbar.update(1)
         return "\n".join(self.cache['full_summary'])
-    
+
     def _parse_edit_suggestion(self, edit, html=True):
         ''' Parse a raw response line from LLM into a diff'''
         # extract first and second quote from string
@@ -408,13 +426,13 @@ Here is the document to summarize:
             return None
         diff = word_diff(first, second, html=html)
         return diff
-        
-    def edit_suggestions(self, model='default', temperature=0.3, force=False, 
-                         as_html=True, display_in_progress=True, small_chunks=False):
+
+    def edit_suggestions(self, model='default', temperature=0.3, force=False,
+                         as_html=True, display_in_progress=True, small_chunks=False, prompt=None):
         '''Provide edit suggestions for the {self.doctype}. This uses direct_question (which is a bit more expensive) on each chunk
-        of the {self.doctype}. It then displays the diff of the original and the suggested edits, formatted as HTML. Prompt currently 
+        of the {self.doctype}. It then displays the diff of the original and the suggested edits, formatted as HTML. Prompt currently
         is opinionated and not customizeable, but you can use the direct_question method directly if you want to customize it.
-        
+
         temperature: the temperature to use for the direct_question method. NUnlike most methods in this class, the default is not zero [default: 0.7]
         as_html: if True it returns an IPython HTML object with the diff of the original and the suggested edits - these
         can be displayed in a notebook. [default: 0.3]
@@ -422,6 +440,8 @@ Here is the document to summarize:
         display_in_progress: if True, display the diff of each chunk as it is being processed. This is useful for reviewing the suggestions
         while the next chunk is being processed. The results are still returned at the end, so if you're in a notebook, assign to a variable
         to keep them from printing again! [default: True]
+
+        prompt: The base request. By default, it is: "Write a numbered list of line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc."
 
         '''
         if ('edit_suggestions' in self.cache) and not force:
@@ -433,14 +453,18 @@ Here is the document to summarize:
                 return HTML("<br/><br/>".join(all_suggestions))
             else:
                 return "\n".join(all_suggestions)
-        
+
         if model == 'default':
             model = self.model
         chunksize = 800 if small_chunks else 'auto'
         _, chunks = self._split_doc(model, chunksize=chunksize)
 
-        prompt = 'Write a numbered list of line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc. Identity as many as you can. Respond in the format `{{original snippet}}||||{{corrected snippet}}`. Ignore smart quotes, and don\'t number the lines.'
-        
+        default_prompt = 'Write a numbered list of line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc.'
+        format_instructions = 'Identity as many as you can. Respond in the format `{{original snippet}}||||{{corrected snippet}}`. Ignore smart quotes, and don\'t number the lines.'
+        if not prompt:
+            prompt = default_prompt
+        prompt += '\n\n' + format_instructions
+
         all_suggestions = []
         all_edit_suggestions = ""
 
@@ -484,7 +508,7 @@ Here is the document to summarize:
 
         if 'full_points' in self.cache and not force:
             return "\n".join(self.cache['full_points'])
-        
+
         chunk_outlines = self.outline_all_chunks(protocol=protocol)
 
         chunk_outlines = [pt for chunk in chunk_outlines for pt in chunk]
@@ -506,19 +530,20 @@ Here is the document to summarize:
         result = openai.ChatCompletion.create(
                 model=model,
                 messages=[
-                {"role": "user", "content": msg}
+                    {"role": "system", "content": "You are a very detailed document summarizer."},
+                    {"role": "user", "content": msg}
                 ],
-                temperature = temperature,
+                temperature=temperature,
         )
         result_txt = result.choices[0].message.content
         keypts_txt = re.sub('^#.*', '', result_txt).strip()
         self.cache['full_points'] = keypts_txt.split('\n')
-        return self.cache['full_points']
+        return "\n".join(self.cache['full_points'])
 
 class PDFPaperSummarizer(PaperSummarizer):
     def __init__(self, pdf_path, cache_location='match_file', *args, **kwargs):
         self.pdf_path = pdf_path
-        
+
         text = self.extract_text_from_pdf()
 
         if cache_location == 'match_file':
@@ -542,12 +567,11 @@ class PDFPaperSummarizer(PaperSummarizer):
                 extracted_text += page.extract_text()
 
         return extracted_text
-    
 
 class MDPaperSummarizer(PaperSummarizer):
     def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
         self.doc_path = doc_path
-        
+
         text = self.extract_text_from_md()
 
         if cache_location == 'match_file':
@@ -570,7 +594,7 @@ class MDPaperSummarizer(PaperSummarizer):
 class DocxPaperSummarizer(PaperSummarizer):
     def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
         self.doc_path = doc_path
-        
+
         text = self.extract_text_from_docx()
 
         if cache_location == 'match_file':
@@ -596,7 +620,7 @@ class DocxPaperSummarizer(PaperSummarizer):
             # Write the formatted text to the file
             text += formatted_paragraph.strip() + "\n\n"
         return text.strip()
-    
+
     def markdown_formatting(self, paragraph):
         """
         This function receives a paragraph object and iterates over its runs,
@@ -621,7 +645,7 @@ class DocxPaperSummarizer(PaperSummarizer):
                 regular += len(run.text)
 
         total_len = len(text.strip())
-        
+
         if paragraph.style.name == "Normal":
             # make guesses for a 'Normal formatted' paragraph
             if total_len <= bold:
@@ -660,8 +684,8 @@ class DocxPaperSummarizer(PaperSummarizer):
                 # fix any formatting within word
                 formatted_text = formatted_text.replace('****', '').replace('’', "'").replace('“', '"').replace('”', '"')
                 formatted_text = re.sub('\*\* +\*\*', r' ', formatted_text)
-                #formatted_text = re.sub('(\W)([\*\_]{1,2})', r'\1 \2', formatted_text)
-                #formatted_text = re.sub('(\w)[\*\_]{1,2}(\w)', r'\1\2', formatted_text)
+                # formatted_text = re.sub('(\W)([\*\_]{1,2})', r'\1 \2', formatted_text)
+                # formatted_text = re.sub('(\w)[\*\_]{1,2}(\w)', r'\1\2', formatted_text)
                 return formatted_text
 
         elif 'Heading' in paragraph.style.name:
@@ -670,12 +694,12 @@ class DocxPaperSummarizer(PaperSummarizer):
 
         else:
             return text
-        
+
 class WebPageSummarizer(PaperSummarizer):
     def __init__(self, url, cache_location='match_file', *args, **kwargs):
         self.url = url
         self.title = None
-        
+
         text = self.extract_text_from_url()
 
         if cache_location == 'match_file':
