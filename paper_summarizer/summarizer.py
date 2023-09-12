@@ -8,6 +8,7 @@ import hashlib
 from .utils import DocSplitter, word_diff
 import numpy as np
 import time
+import warnings
 from IPython.display import display, Markdown, HTML, clear_output
 
 
@@ -203,7 +204,7 @@ Are you ready to answer questions about the document?
             return final_result
 
     def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False,
-                  no_cache=False, stream=False, md=False):
+                  no_cache=False, stream=False, md=False, retries=3, cooldown=5):
         if model == 'default':
             model = self.model
 
@@ -215,31 +216,40 @@ Are you ready to answer questions about the document?
         big_summary = {"role": "user", "content": summary_prompt}
         bot_affirm = {"role": "assistant", "content": "Yes, I am ready to answer questions about the {self.doctype}."}
 
-        result = openai.ChatCompletion.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful document reader and assistant."},
-                big_summary, bot_affirm,
-                {"role": "user", "content": question}
-            ],
-            stream=stream,
-            temperature=temperature
-        )
+        for attempt in range(retries):
+            try:
+                result = openai.ChatCompletion.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful document reader and assistant."},
+                        big_summary, bot_affirm,
+                        {"role": "user", "content": question}
+                    ],
+                    stream=stream,
+                    temperature=temperature
+                )
 
-        if stream:
-            result_msg = self._stream_response(result, md=md)
-        else:
-            result_msg = result.choices[0].message
+                if stream:
+                    result_msg = self._stream_response(result, md=md)
+                else:
+                    result_msg = result.choices[0].message
 
-        if not no_cache:
-            if key not in self.cache:
-                self.cache[key] = {}
-            qs = self.cache[key]
-            qs[question] = result_msg.get('content', '').split('\n')
-            self.cache[key] = qs
-            return "\n".join(qs[question])
-        else:
-            return result_msg.get('content', '')
+                if not no_cache:
+                    if key not in self.cache:
+                        self.cache[key] = {}
+                    qs = self.cache[key]
+                    qs[question] = result_msg.get('content', '').split('\n')
+                    self.cache[key] = qs
+                    return "\n".join(qs[question])
+                else:
+                    return result_msg.get('content', '')
+            except (openai.error.APIError, openai.error.TryAgain, openai.error.Timeout) as e:
+                if attempt < retries - 1:
+                    warnings.warn(f"Attempt {attempt + 1} failed with error: {str(e)}. Retrying in {cooldown} seconds...")
+                    time.sleep(cooldown)
+                    continue
+                else:
+                    raise e
 
     def summarize(self, md=False, model='default', protocol=0, force=False):
         ''' Print full summaries'''
@@ -479,7 +489,8 @@ Here is the document to summarize:
                                                     model=model)
             edit_suggestions = re.sub(r"\n\s*(\|\|\|\|)", r"\1", edit_suggestions)
             edit_suggestions = re.sub(r"^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
-            edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", edit_suggestions, flags=re.MULTILINE)
+            edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", 
+                                      edit_suggestions, flags=re.MULTILINE)
 
             all_edit_suggestions += '\n' + edit_suggestions
 
