@@ -76,16 +76,16 @@ Are you ready to answer questions about the {self.doctype}?
         update_chunks = False
         if chunksize == 'auto':
             if '32k' in model:
-                chunksize = 2*32768//3
+                chunksize = 2 * 32768 // 3
             elif '16k' in model:
-                chunksize = 2 * 16384//3
+                chunksize = 2 * 16384 // 3
             elif model.startswith('gpt-4'):
-                chunksize = 2*8192//3
+                chunksize = 2 * 8192 // 3
             elif model.startswith('gpt-3.5'):
-                chunksize = 2*4097//3
+                chunksize = 2 * 4097 // 3
             else:
                 print(f'unrecognized model {model}, assuming 4k context')
-                chunksize = 2*4097//3
+                chunksize = 2 * 4097 // 3
         else:
             # saved chunks may not match the target chunk size
             update_chunks = True
@@ -159,7 +159,7 @@ Are you ready to answer questions about the {self.doctype}?
         elif target_chunk == 'all':
             target_chunks = chunks
         else:
-            target_chunks = [chunks[min(target_chunk, len(chunks)-1)]]
+            target_chunks = [chunks[min(target_chunk, len(chunks) - 1)]]
 
         if len(target_chunks) > 1:
             pbar = tqdm(total=len(target_chunks), desc="Collecting Line Item Suggestions", position=1, leave=False)
@@ -216,15 +216,15 @@ Are you ready to answer questions about the document?
         bot_affirm = {"role": "assistant", "content": "Yes, I am ready to answer questions about the {self.doctype}."}
 
         result = openai.ChatCompletion.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful document reader and assistant."},
-                        big_summary, bot_affirm,
-                        {"role": "user", "content": question}
-                    ],
-                    stream=stream,
-                    temperature=temperature,
-            )
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful document reader and assistant."},
+                big_summary, bot_affirm,
+                {"role": "user", "content": question}
+            ],
+            stream=stream,
+            temperature=temperature
+        )
 
         if stream:
             result_msg = self._stream_response(result, md=md)
@@ -299,7 +299,7 @@ Are you ready to answer questions about the document?
             model = self.model
         _, chunks = self._split_doc(model)
 
-        max_len = min(np.round(100/len(chunks), 0).astype(int), 20)  # max length of summary is 100%/len(chunks) or 20% of the total length of the document
+        max_len = min(np.round(100 / len(chunks), 0).astype(int), 20)  # max length of summary is 100%/len(chunks) or 20% of the total length of the document
 
         protocols = [
         f'''Outline the following chunk of a {self.doctype}, point-by-point, with as much details as is needed to capture all arguments.
@@ -364,7 +364,7 @@ Here is the document to summarize:
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
                 {"role": "user", "content": msg.strip()}
-                ],
+            ],
             temperature=temperature,
         )
         if raw_response:
@@ -406,7 +406,7 @@ Here is the document to summarize:
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
                 {"role": "user", "content": msg}
-                ],
+            ],
             temperature=temperature,
         )
         self.cache['full_summary'] = result.choices[0].message.content.split('\n')
@@ -428,7 +428,8 @@ Here is the document to summarize:
         return diff
 
     def edit_suggestions(self, model='default', temperature=0.3, force=False,
-                         as_html=True, display_in_progress=True, small_chunks=False, prompt=None):
+                         as_html=True, display_in_progress=True,
+                         small_chunks=False, prompt=None):
         '''Provide edit suggestions for the {self.doctype}. This uses direct_question (which is a bit more expensive) on each chunk
         of the {self.doctype}. It then displays the diff of the original and the suggested edits, formatted as HTML. Prompt currently
         is opinionated and not customizeable, but you can use the direct_question method directly if you want to customize it.
@@ -442,11 +443,10 @@ Here is the document to summarize:
         to keep them from printing again! [default: True]
 
         prompt: The base request. By default, it is: "Write a numbered list of line-item edit suggestions for typo corrections, confusing sentences, poor grammar, etc."
-
         '''
         if ('edit_suggestions' in self.cache) and not force:
             all_edit_lines = "\n".join(self.cache['edit_suggestions'])
-            all_edit_lines = re.sub('\n\s+(\|\|\|\|)', r'\1', all_edit_lines) # shouldn't be needed if saved properly
+            all_edit_lines = re.sub(r'\n\s+(\|\|\|\|)', r'\1', all_edit_lines)  # shouldn't be needed if saved properly
             all_suggestions = [self._parse_edit_suggestion(x, html=as_html) for x in all_edit_lines.split('\n')]
             all_suggestions = [x for x in all_suggestions if x is not None]
             if as_html:
@@ -472,13 +472,14 @@ Here is the document to summarize:
         for chunk in tqdm(chunks, desc="Generating edit suggestions", position=0, leave=False):
             edit_suggestions = self.direct_question(prompt, force=force,
                                                     temperature=temperature,
-                                                    md=False, target_text=chunk,
+                                                    md=False,
+                                                    target_text=chunk,
                                                     target_chunk=None,
                                                     no_cache=True,
                                                     model=model)
-            edit_suggestions = re.sub("\n\s*(\|\|\|\|)", r"\1", edit_suggestions)
-            edit_suggestions = re.sub("^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
-            edit_suggestions = re.sub("^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", edit_suggestions, flags=re.MULTILINE)
+            edit_suggestions = re.sub(r"\n\s*(\|\|\|\|)", r"\1", edit_suggestions)
+            edit_suggestions = re.sub(r"^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
+            edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", edit_suggestions, flags=re.MULTILINE)
 
             all_edit_suggestions += '\n' + edit_suggestions
 
@@ -495,6 +496,7 @@ Here is the document to summarize:
                         print(diff)
 
         self.cache['edit_suggestions'] = all_edit_suggestions.strip().split('\n')
+
         if as_html:
             html = "<br/>".join(all_diffs)
             return HTML(html)
@@ -528,17 +530,18 @@ Here is the document to summarize:
         '''
 
         result = openai.ChatCompletion.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a very detailed document summarizer."},
-                    {"role": "user", "content": msg}
-                ],
-                temperature=temperature,
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a very detailed document summarizer."},
+                {"role": "user", "content": msg}
+            ],
+            temperature=temperature
         )
         result_txt = result.choices[0].message.content
         keypts_txt = re.sub('^#.*', '', result_txt).strip()
         self.cache['full_points'] = keypts_txt.split('\n')
         return "\n".join(self.cache['full_points'])
+
 
 class PDFPaperSummarizer(PaperSummarizer):
     def __init__(self, pdf_path, cache_location='match_file', *args, **kwargs):
@@ -568,6 +571,7 @@ class PDFPaperSummarizer(PaperSummarizer):
 
         return extracted_text
 
+
 class MDPaperSummarizer(PaperSummarizer):
     def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
         self.doc_path = doc_path
@@ -590,6 +594,7 @@ class MDPaperSummarizer(PaperSummarizer):
         with open(self.doc_path, "r") as file:
             text = file.read()
         return text
+
 
 class DocxPaperSummarizer(PaperSummarizer):
     def __init__(self, doc_path, cache_location='match_file', *args, **kwargs):
@@ -683,7 +688,7 @@ class DocxPaperSummarizer(PaperSummarizer):
                         formatted_text += run.text
                 # fix any formatting within word
                 formatted_text = formatted_text.replace('****', '').replace('’', "'").replace('“', '"').replace('”', '"')
-                formatted_text = re.sub('\*\* +\*\*', r' ', formatted_text)
+                formatted_text = re.sub(r'\*\* +\*\*', r' ', formatted_text)
                 # formatted_text = re.sub('(\W)([\*\_]{1,2})', r'\1 \2', formatted_text)
                 # formatted_text = re.sub('(\w)[\*\_]{1,2}(\w)', r'\1\2', formatted_text)
                 return formatted_text
@@ -694,6 +699,7 @@ class DocxPaperSummarizer(PaperSummarizer):
 
         else:
             return text
+
 
 class WebPageSummarizer(PaperSummarizer):
     def __init__(self, url, cache_location='match_file', *args, **kwargs):
