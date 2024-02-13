@@ -5,3 +5,5 @@ hashing*
 *-test*
 data/
 mockups/*
+paper_summarizer.code-workspace
+applied_notebooks/

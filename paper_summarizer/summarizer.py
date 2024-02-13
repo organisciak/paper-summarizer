@@ -6,6 +6,7 @@ from yaml_sync import YamlCache
 from pathlib import Path
 import hashlib
 from .utils import DocSplitter, word_diff
+from .templates import TEMPLATES
 import numpy as np
 import time
 import warnings
@@ -15,7 +16,7 @@ from IPython.display import display, Markdown, HTML, clear_output
 class PaperSummarizer:
     def __init__(self, text, cache=True, cache_location=None,
                  model='gpt-3.5-turbo', doctype='research paper',
-                 drop_refs=True):
+                 drop_refs=True, client=None):
         self.cache_location = cache_location
         self.model = model
         self.text = text
@@ -23,6 +24,7 @@ class PaperSummarizer:
         self.chunks = None
         self.doctype = doctype
         self.drop_refs = drop_refs
+        self.client = client or openai.OpenAI()
 
         assert not (cache and cache_location is None), "Set a location for yaml file with cache_location if cache is True"
 
@@ -45,18 +47,7 @@ class PaperSummarizer:
         summary = self.full_summary()
         pts = self.full_points()
 
-        big_summary = f'''The following is a summary of a {self.doctype} and it's key points.
-
-# SUMMARY
-{summary}
-
-# KEY POINTS
-{pts}
-
--------------
-
-Are you ready to answer questions about the {self.doctype}?
-'''
+        big_summary = TEMPLATES['big_summary'].format(self.doctype.upper(), summary, pts)
         result = self._question(big_summary, question, 'questions',
                                 model=model, temperature=temperature,
                                 force=force, stream=stream, md=md)
@@ -116,7 +107,7 @@ Are you ready to answer questions about the {self.doctype}?
         for chunk in response:
             collected_chunks.append(chunk)
             chunk_message = chunk['choices'][0]['delta']
-            collected_content += chunk_message.get('content', '')
+            collected_content += dict(chunk_message).get('content', '')
 
             if 'role' in chunk_message:
                 role = chunk_message['role']
@@ -126,7 +117,7 @@ Are you ready to answer questions about the {self.doctype}?
                     clear_output(wait=True)
                     display(Markdown(collected_content.replace('\n', '\n\n')))
                 else:
-                    print(chunk_message.get('content', ''), end='')
+                    print(dict(chunk_message).get('content', ''), end='')
                 last_print = time.time()
 
         if clear_on_finish:
@@ -218,7 +209,7 @@ Are you ready to answer questions about the document?
 
         for attempt in range(retries):
             try:
-                result = openai.ChatCompletion.create(
+                result = self.client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": "You are a helpful document reader and assistant."},
@@ -238,12 +229,12 @@ Are you ready to answer questions about the document?
                     if key not in self.cache:
                         self.cache[key] = {}
                     qs = self.cache[key]
-                    qs[question] = result_msg.get('content', '').split('\n')
+                    qs[question] = dict(result_msg).get('content', '').split('\n')
                     self.cache[key] = qs
                     return "\n".join(qs[question])
                 else:
-                    return result_msg.get('content', '')
-            except (openai.error.APIError, openai.error.TryAgain, openai.error.Timeout) as e:
+                    return dict(result_msg).get('content', '')
+            except (openai.APIError, openai.InternalServerError, openai.APITimeoutError) as e:
                 if attempt < retries - 1:
                     warnings.warn(f"Attempt {attempt + 1} failed with error: {str(e)}. Retrying in {cooldown} seconds...")
                     time.sleep(cooldown)
@@ -311,65 +302,11 @@ Are you ready to answer questions about the document?
 
         max_len = min(np.round(100 / len(chunks), 0).astype(int), 20)  # max length of summary is 100%/len(chunks) or 20% of the total length of the document
 
-        protocols = [
-        f'''Outline the following chunk of a {self.doctype}, point-by-point, with as much details as is needed to capture all arguments.
-Material that may be important is: justification, background information, methods used, experimental results - with quants if available, discussion, important considerations, and broad impact.
-
-Format the output in Markdown, under the heading 'OUTLINE'.
-
-OUTLINE should be a finely detailed point-by-point outline of this chunk of the article. Exclude copyright information and paratextual material.
-
-Here is the {self.doctype.lower()} to summarize:
-
-{self.doctype.upper()}
--------
-
-{chunk}
-''',
-
-f'''Summarize every paragraph in the following chunk of a {self.doctype}. Be as detailed as possible. The summary should be no more than {max_len}% of the length (i.e. trim it by {1-max_len}%). Capture all arguments.
-Material that may be important is: justification, background information, methods used, experimental results - with quants if available, discussion, important considerations, and broad impact. Exclude copyright information and paratextual material.
-
-Format the output in Markdown, under the heading 'OUTLINE'. Include paragraph number references for each point.
-
-Here is the document to summarize:
-
-{self.doctype.upper()}
--------
-
-{chunk}
-''',
-
-f'''Paragraph by paragraph, outline every paragraph in this {self.doctype} in 5000 words, with the paragraph number cited.
-
-Format the output in Markdown, under the heading 'OUTLINE'. Include paragraph number references for each point.
-
-Here is the document to summarize:
-
-{self.doctype.upper()}
--------
-
-{chunk}
-''',
-
-f'''Rewrite the following document to half the length.
-
-Format the output in Markdown, under the heading 'OUTLINE'. Include paragraph number references for each point.
-
-Here is the document to summarize:
-
-{self.doctype.upper()}
--------
-
-{chunk}
-'''
-
-        ]
-        msg = protocols[protocol]
+        msg = TEMPLATES['chunk_outline'][protocol].format(doctype=self.doctype.upper(), chunk=chunk, max_len=max_len)
         if debug:
             print(msg[:2000])
 
-        result = openai.ChatCompletion.create(
+        result = self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
@@ -411,7 +348,7 @@ Here is the document to summarize:
         for i, chunk_outline in enumerate(all_outlines):
             msg += f"# CHUNK {i}\n{chunk_outline}\n\n"
 
-        result = openai.ChatCompletion.create(
+        result = self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
@@ -489,7 +426,7 @@ Here is the document to summarize:
                                                     model=model)
             edit_suggestions = re.sub(r"\n\s*(\|\|\|\|)", r"\1", edit_suggestions)
             edit_suggestions = re.sub(r"^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
-            edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3", 
+            edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3",
                                       edit_suggestions, flags=re.MULTILINE)
 
             all_edit_suggestions += '\n' + edit_suggestions
@@ -540,7 +477,7 @@ Here is the document to summarize:
         {in_pts}
         '''
 
-        result = openai.ChatCompletion.create(
+        result = self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer."},
