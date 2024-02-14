@@ -1,7 +1,9 @@
 import PyPDF2
+from tqdm.asyncio import tqdm_asyncio
 from tqdm.auto import tqdm
 import openai
 import re
+import asyncio
 from yaml_sync import YamlCache
 from pathlib import Path
 import hashlib
@@ -16,7 +18,7 @@ from IPython.display import display, Markdown, HTML, clear_output
 class PaperSummarizer:
     def __init__(self, text, cache=True, cache_location=None,
                  model='gpt-3.5-turbo', doctype='research paper',
-                 drop_refs=True, client=None):
+                 drop_refs=True, client=None, async_limit=5):
         self.cache_location = cache_location
         self.model = model
         self.text = text
@@ -24,7 +26,8 @@ class PaperSummarizer:
         self.chunks = None
         self.doctype = doctype
         self.drop_refs = drop_refs
-        self.client = client or openai.OpenAI()
+        self.client = client or openai.AsyncOpenAI()
+        self.semaphore = asyncio.Semaphore(async_limit)
 
         assert not (cache and cache_location is None), "Set a location for yaml file with cache_location if cache is True"
 
@@ -38,19 +41,26 @@ class PaperSummarizer:
             self.cache = {}
         self.cache['model'] = model
 
-    def question(self, question, model='default', temperature=0, force=False,
-                 md=False, stream=False):
+    async def gather_summary_and_points(self, model='default', temperature=0, force=False, protocol=0):
+        ''' Gather the full summary and key points asynchronously'''
+        summary, pts = await asyncio.gather(
+            self.full_summary(model=model, temperature=temperature, force=force, protocol=protocol),
+            self.full_points(model=model, temperature=temperature, force=force, protocol=protocol)
+        )
+        return summary, pts
+
+    async def question(self, question, model='default', temperature=0, force=False,
+                       md=False, stream=False):
         ''' Once the full summary and keypoints are created, you can ask
         ad-hoc questions.
         '''
 
-        summary = self.full_summary()
-        pts = self.full_points()
+        summary, pts = await self.gather_summary_and_points(model=model, temperature=temperature, force=force)
 
         big_summary = TEMPLATES['big_summary'].format(self.doctype.upper(), summary, pts)
-        result = self._question(big_summary, question, 'questions',
-                                model=model, temperature=temperature,
-                                force=force, stream=stream, md=md)
+        result = await self._question(big_summary, question, 'questions',
+                                      model=model, temperature=temperature,
+                                      force=force, stream=stream, md=md)
 
         if md:
             return Markdown(result.replace('\n', '\n\n'))
@@ -125,7 +135,7 @@ class PaperSummarizer:
 
         return {'role': role, 'content': collected_content}
 
-    def direct_question(self, question, model='default', temperature=0,
+    async def direct_question(self, question, model='default', temperature=0,
                         force=False, md=False, target_chunk=0, target_text=None, no_cache=False,
                         stream=False):
         ''' Ask a question directly of the full text (only the first chunk,
@@ -170,12 +180,12 @@ Are you ready to answer questions about the document?
 
         for target_text in target_chunks:
             prompt = direct_q_template.format(self.doctype.upper(), target_text)
-            result = self._question(prompt, question, 'direct_questions',
-                                    model=model,
-                                    temperature=temperature,
-                                    stream=stream,
-                                    md=md,
-                                    force=force, no_cache=True)
+            result = await self._question(prompt, question, 'direct_questions',
+                                          model=model,
+                                          temperature=temperature,
+                                          stream=stream,
+                                          md=md,
+                                          force=force, no_cache=True)
             results.append(result)
             if len(target_chunks) > 1:
                 pbar.update(1)
@@ -194,8 +204,8 @@ Are you ready to answer questions about the document?
         else:
             return final_result
 
-    def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False,
-                  no_cache=False, stream=False, md=False, retries=3, cooldown=5):
+    async def _question(self, summary_prompt, question, key, model='default', temperature=0, force=False,
+                        no_cache=False, stream=False, md=False, retries=3, cooldown=5):
         if model == 'default':
             model = self.model
 
@@ -209,7 +219,7 @@ Are you ready to answer questions about the document?
 
         for attempt in range(retries):
             try:
-                result = self.client.chat.completions.create(
+                result = await self.client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": "You are a helpful document reader and assistant."},
@@ -237,15 +247,14 @@ Are you ready to answer questions about the document?
             except (openai.APIError, openai.InternalServerError, openai.APITimeoutError) as e:
                 if attempt < retries - 1:
                     warnings.warn(f"Attempt {attempt + 1} failed with error: {str(e)}. Retrying in {cooldown} seconds...")
-                    time.sleep(cooldown)
+                    await asyncio.sleep(cooldown)
                     continue
                 else:
                     raise e
 
-    def summarize(self, md=False, model='default', protocol=0, force=False):
+    async def summarize(self, md=False, model='default', protocol=0, force=False):
         ''' Print full summaries'''
-        summary = self.full_summary(protocol=protocol, force=force, model=model)
-        pts = self.full_points(protocol=protocol, model=model)
+        summary, pts = await self.gather_summary_and_points(protocol=protocol, model=model, force=force)
 
         out = f'## Summary\n{summary}\n## Key Points\n{pts}'
         if md:
@@ -253,7 +262,7 @@ Are you ready to answer questions about the document?
         else:
             print(out)
 
-    def outline_all_chunks(self, model='default', force=False, protocol=0, debug=False):
+    async def outline_all_chunks(self, model='default', force=False, protocol=0, debug=False):
         ''' Iterate through chunks and get summaries and key points for each one.
 
         Protocol is an integer referring to a specific prompt style, and is passed down to outline_chunk.
@@ -266,18 +275,15 @@ Are you ready to answer questions about the document?
         if ('chunk_outlines' in self.cache) and (len(self.cache['chunk_outlines']) == len(chunks)) and not force:
             return self.cache['chunk_outlines']
 
-        pbar = tqdm(total=len(chunks), desc=f"{self.doctype.title()} chunk summarizing progress", position=1, leave=False)
         all_pts = []
-        for i, chunk in enumerate(chunks):
-            if ('chunk_outlines' in self.cache) and (i < len(self.cache['chunk_outlines'])) and not force:
-                # resume previously interrupted process that already has *some* outlines
-                pbar.update(1)
-                continue
-            pts = self.outline_chunk(chunk, protocol=protocol, debug=debug)
+        async def process_chunk(chunk):
+            async with self.semaphore:
+                pts = await self.outline_chunk(chunk, protocol=protocol, debug=debug)
+                return pts
+            
+        tasks = [process_chunk(chunk) for chunk in chunks]
+        for pts in await tqdm_asyncio.gather(*tasks, desc=f"{self.doctype.title()} chunk summarizing progress", position=1, leave=False):
             all_pts.append(pts)
-            # save intermediate progress
-            self.cache['chunk_outlines'] = all_pts
-            pbar.update(1)
 
         self.cache['chunk_outlines'] = all_pts
 
@@ -287,7 +293,7 @@ Are you ready to answer questions about the document?
 
         return self.cache['chunk_outlines']
 
-    def outline_chunk(self, chunk, model='default', temperature=0, raw_response=False, protocol=0, debug=False):
+    async def outline_chunk(self, chunk, model='default', temperature=0, raw_response=False, protocol=0, debug=False):
         ''' Summarize a chunk of a document, into a summary and outline.
 
         The protocol is an integer referring to a specific prompt style.
@@ -306,7 +312,7 @@ Are you ready to answer questions about the document?
         if debug:
             print(msg[:2000])
 
-        result = self.client.chat.completions.create(
+        result = await self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
@@ -321,7 +327,7 @@ Are you ready to answer questions about the document?
         pts = pts.split('\n')
         return pts
 
-    def full_summary(self, model='default', temperature=0, force=False, protocol=0):
+    async def full_summary(self, model='default', temperature=0, force=False, protocol=0):
         ''' Combine the chunk summaries into one full document summary'''
 
         if model == 'default':
@@ -336,7 +342,7 @@ Are you ready to answer questions about the document?
 
         pbar = tqdm(total=2, desc="Preparing full summary", position=0, leave=False)
         pbar.set_description(f'Outlining {self.doctype} chunks')
-        all_outlines = self.outline_all_chunks(protocol=protocol)
+        all_outlines = await self.outline_all_chunks(protocol=protocol)
         pbar.update(1)
         pbar.set_description('Combining outline notes to a full summary')
 
@@ -348,7 +354,7 @@ Are you ready to answer questions about the document?
         for i, chunk_outline in enumerate(all_outlines):
             msg += f"# CHUNK {i}\n{chunk_outline}\n\n"
 
-        result = self.client.chat.completions.create(
+        result = await self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer"},
@@ -374,9 +380,9 @@ Are you ready to answer questions about the document?
         diff = word_diff(first, second, html=html)
         return diff
 
-    def edit_suggestions(self, model='default', temperature=0.3, force=False,
-                         as_html=True, display_in_progress=True,
-                         small_chunks=False, prompt=None):
+    async def edit_suggestions(self, model='default', temperature=0.3, force=False,
+                               as_html=True, display_in_progress=True,
+                               small_chunks=False, prompt=None):
         '''Provide edit suggestions for the {self.doctype}. This uses direct_question (which is a bit more expensive) on each chunk
         of the {self.doctype}. It then displays the diff of the original and the suggested edits, formatted as HTML. Prompt currently
         is opinionated and not customizeable, but you can use the direct_question method directly if you want to customize it.
@@ -416,18 +422,29 @@ Are you ready to answer questions about the document?
         all_edit_suggestions = ""
 
         all_diffs = []
-        for chunk in tqdm(chunks, desc="Generating edit suggestions", position=0, leave=False):
-            edit_suggestions = self.direct_question(prompt, force=force,
-                                                    temperature=temperature,
-                                                    md=False,
-                                                    target_text=chunk,
-                                                    target_chunk=None,
-                                                    no_cache=True,
-                                                    model=model)
+
+        # ensure that summary and points run first, so that they are cached
+        # in the async loops
+        if not force:
+            summary, pts = await self.gather_summary_and_points(model=model, temperature=temperature, force=force)
+
+        async def process_chunk(chunk):
+            async with self.semaphore:
+                edit_suggestions = await self.direct_question(prompt, force=force,
+                                                        temperature=temperature,
+                                                        md=False,
+                                                        target_text=chunk,
+                                                        target_chunk=None,
+                                                        no_cache=True,
+                                                        model=model)
+                return edit_suggestions
+
+        tasks = [process_chunk(chunk) for chunk in chunks]
+        for edit_suggestions in await tqdm_asyncio.gather(*tasks, desc="Generating edit suggestions", position=0, leave=False):
             edit_suggestions = re.sub(r"\n\s*(\|\|\|\|)", r"\1", edit_suggestions)
             edit_suggestions = re.sub(r"^\d+\. ", "", edit_suggestions, flags=re.MULTILINE)
             edit_suggestions = re.sub(r"^.*?\{\{(.*?)\}\}(\|\|\|\|)\{\{(.*?)\}\}.*$", r"\1\2\3",
-                                      edit_suggestions, flags=re.MULTILINE)
+                                        edit_suggestions, flags=re.MULTILINE)
 
             all_edit_suggestions += '\n' + edit_suggestions
 
@@ -451,7 +468,7 @@ Are you ready to answer questions about the document?
         else:
             return "\n\n".join(all_diffs)
 
-    def full_points(self, model='default', temperature=0, force=False, protocol=0):
+    async def full_points(self, model='default', temperature=0, force=False, protocol=0):
         ''' Combine the by-chunk key points into one set'''
         if model == 'default':
             model = self.model
@@ -459,7 +476,7 @@ Are you ready to answer questions about the document?
         if 'full_points' in self.cache and not force:
             return "\n".join(self.cache['full_points'])
 
-        chunk_outlines = self.outline_all_chunks(protocol=protocol)
+        chunk_outlines = await self.outline_all_chunks(protocol=protocol)
 
         chunk_outlines = [pt for chunk in chunk_outlines for pt in chunk]
         in_pts = "- " + "\n- ".join(chunk_outlines)
@@ -477,7 +494,7 @@ Are you ready to answer questions about the document?
         {in_pts}
         '''
 
-        result = self.client.chat.completions.create(
+        result = await self.client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a very detailed document summarizer."},
